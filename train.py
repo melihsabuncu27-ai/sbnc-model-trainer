@@ -11,7 +11,9 @@ from tensorflow.keras.metrics import AUC
 from sklearn.metrics import roc_auc_score
 from datetime import datetime
 
+# ============================================================
 # AYARLAR
+# ============================================================
 with open("config.json") as f:
     CFG = json.load(f)
 
@@ -19,10 +21,17 @@ SYMBOLS = CFG["symbols"]
 VERSION = f"v4.{int(time.time())}"
 GLOBAL_MEDIAN = 0.007338
 
+# Mevcut modelin metrikleri (referans)
+CURRENT_AUC = 0.7744
+CURRENT_WALK = 0.70
+
 print(f"🚀 Eğitim başlıyor: {VERSION}")
 print(f"📅 {datetime.now()}")
 
 
+# ============================================================
+# BINANCE PUBLIC DATA API
+# ============================================================
 def fetch_klines(symbol, interval="1h", limit=35000):
     """Binance PUBLIC DATA API — coğrafi kısıtlama yok"""
     base_url = "https://data-api.binance.vision/api/v3/klines"
@@ -64,6 +73,9 @@ def fetch_klines(symbol, interval="1h", limit=35000):
     return df[["open","high","low","close","volume"]]
 
 
+# ============================================================
+# FEATURE ENGINEERING
+# ============================================================
 def add_features(df):
     df = df.copy()
     lr = np.log(df["close"]).diff()
@@ -115,6 +127,9 @@ def normalize_per_symbol(df, window=720, min_periods=168):
     return df
 
 
+# ============================================================
+# VERİ HAZIRLA
+# ============================================================
 print("\n📊 Veri hazırlanıyor...")
 X_list, yd_list, yv_list, r_list = [], [], [], []
 FEATS = None
@@ -165,6 +180,9 @@ r_all = np.concatenate(r_list, 0)
 print(f"\n✅ Veri: {X_all.shape}, {len(FEATS)} feature")
 
 
+# ============================================================
+# SEKANS + SPLIT
+# ============================================================
 SEQ_LEN = 48
 split = int(len(X_all) * 0.7)
 
@@ -182,7 +200,11 @@ X_tr = X_seq[:seq_split]; X_te = X_seq[seq_split:]
 yd_tr, yd_te = yd_seq[:seq_split], yd_seq[seq_split:]
 yv_tr, yv_te = yv_seq[:seq_split], yv_seq[seq_split:]
 
-print("\n🧠 Model eğitiliyor...")
+
+# ============================================================
+# LSTM MODELİ
+# ============================================================
+print("\n🧠 LSTM Modeli eğitiliyor...")
 
 def build_lstm(seq_len, n_feat):
     inp = layers.Input(shape=(seq_len, n_feat))
@@ -228,36 +250,35 @@ for i in range(4):
     a = roc_auc_score(yd_te[s:e], p_lstm[s:e])
     aucs.append(a)
 min_walk = min(aucs)
+print(f"✅ Walk-Forward min: {min_walk:.4f}")
 
-# Mevcut modelin metrikleri (elle gir)
-CURRENT_AUC = 0.7744
-CURRENT_WALK = 0.70
 
-# Yeni model eskisinden İYİ olmalı
-passed = (auc_lstm > CURRENT_AUC - 0.02 and   # En az %2 düşük olabilir
+# ============================================================
+# KALİTE KONTROLÜ
+# ============================================================
+passed = (auc_lstm > CURRENT_AUC - 0.02 and
           min_walk > CURRENT_WALK - 0.02 and
           auc_lstm > 0.70 and
           min_walk > 0.65)
 
-print(f"\nKalite Kontrolü:")
-print(f"  Yeni AUC    : {auc_lstm:.4f} (min: {CURRENT_AUC - 0.02:.4f})")
-print(f"  Yeni Walk   : {min_walk:.4f} (min: {CURRENT_WALK - 0.02:.4f})")
-print(f"  Geçti mi?   : {'✅' if passed else '❌'}")
-
 print(f"\n{'='*60}")
-print(f"EĞİTİM SONUCU")
+print(f"KALİTE KONTROLÜ")
 print(f"{'='*60}")
-print(f"Version        : {VERSION}")
-print(f"LSTM AUC       : {auc_lstm:.4f}")
-print(f"Walk-Fwd min   : {min_walk:.4f}")
-print(f"Durum          : {'✅ GEÇTİ' if passed else '❌ BAŞARISIZ'}")
+print(f"  Yeni AUC    : {auc_lstm:.4f}  (min: {CURRENT_AUC - 0.02:.4f})")
+print(f"  Yeni Walk   : {min_walk:.4f}  (min: {CURRENT_WALK - 0.02:.4f})")
+print(f"  Geçti mi?   : {'✅' if passed else '❌'}")
 print(f"{'='*60}")
 
 if not passed:
     print("\n⚠️ Model kaliteyi geçemedi, deploy edilmeyecek")
     sys.exit(1)
 
-# LSTM → TFLite
+
+# ============================================================
+# LSTM → TFLITE
+# ============================================================
+print("\n📦 LSTM TFLite'a çevriliyor...")
+
 converter = tf.lite.TFLiteConverter.from_keras_model(model_lstm)
 converter.optimizations = [tf.lite.Optimize.DEFAULT]
 converter.target_spec.supported_types = [tf.float16]
@@ -268,7 +289,12 @@ converter.target_spec.supported_ops = [
 converter._experimental_lower_tensor_list_ops = False
 tflite_lstm = converter.convert()
 
-# MLP
+
+# ============================================================
+# MLP MODELİ
+# ============================================================
+print("\n🧠 MLP Modeli eğitiliyor...")
+
 def build_mlp(n_feat):
     inp = layers.Input(shape=(n_feat,))
     x = layers.Dense(128, activation="relu")(inp)
@@ -300,6 +326,10 @@ converter.optimizations = [tf.lite.Optimize.DEFAULT]
 converter.target_spec.supported_types = [tf.float16]
 tflite_mlp = converter.convert()
 
+
+# ============================================================
+# KAYDET
+# ============================================================
 OUT_DIR = "output"
 os.makedirs(OUT_DIR, exist_ok=True)
 
