@@ -229,7 +229,20 @@ for i in range(4):
     aucs.append(a)
 min_walk = min(aucs)
 
-passed = auc_lstm > 0.65 and min_walk > 0.60
+# Mevcut modelin metrikleri (elle gir)
+CURRENT_AUC = 0.7744
+CURRENT_WALK = 0.70
+
+# Yeni model eskisinden İYİ olmalı
+passed = (auc_lstm > CURRENT_AUC - 0.02 and   # En az %2 düşük olabilir
+          min_walk > CURRENT_WALK - 0.02 and
+          auc_lstm > 0.70 and
+          min_walk > 0.65)
+
+print(f"\nKalite Kontrolü:")
+print(f"  Yeni AUC    : {auc_lstm:.4f} (min: {CURRENT_AUC - 0.02:.4f})")
+print(f"  Yeni Walk   : {min_walk:.4f} (min: {CURRENT_WALK - 0.02:.4f})")
+print(f"  Geçti mi?   : {'✅' if passed else '❌'}")
 
 print(f"\n{'='*60}")
 print(f"EĞİTİM SONUCU")
