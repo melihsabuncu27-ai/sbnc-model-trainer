@@ -9,7 +9,7 @@ from tensorflow.keras import layers, Model, callbacks, optimizers
 from tensorflow.keras.metrics import AUC
 from sklearn.metrics import roc_auc_score
 from datetime import datetime
-from binance.client import Client
+import requests
 
 # AYARLAR
 with open("config.json") as f:
@@ -25,17 +25,34 @@ print(f"📅 {datetime.now()}")
 client = Client()
 
 def fetch_klines(symbol, interval="1h", limit=35000):
-    klines = client.get_klines(symbol=symbol, interval=interval, limit=1000)
-    all_k = list(klines)
+    """Binance PUBLIC DATA API — coğrafi kısıtlama yok"""
+    base_url = "https://data-api.binance.vision/api/v3/klines"
+    all_k = []
+    end_time = None
+    
     while len(all_k) < limit:
-        last_time = all_k[0][0]
-        older = client.get_klines(
-            symbol=symbol, interval=interval, limit=1000,
-            endTime=last_time - 1
-        )
-        if not older: break
-        all_k = list(older) + all_k
-        time.sleep(0.1)
+        params = {"symbol": symbol, "interval": interval, "limit": 1000}
+        if end_time:
+            params["endTime"] = end_time
+        
+        try:
+            resp = requests.get(base_url, params=params, timeout=15)
+            if resp.status_code != 200:
+                print(f"  ⚠️ {symbol}: HTTP {resp.status_code}")
+                break
+            klines = resp.json()
+            if not klines:
+                break
+            
+            all_k = klines + all_k
+            end_time = klines[0][0] - 1
+            time.sleep(0.05)
+        except Exception as e:
+            print(f"  ⚠️ {symbol}: {e}")
+            break
+    
+    if not all_k:
+        return None
     
     df = pd.DataFrame(all_k, columns=[
         "time","open","high","low","close","volume",
