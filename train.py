@@ -65,7 +65,7 @@ print(f"📋 v4 feature listesi: {len(V4_FEATURES)} feature")
 
 
 # ============================================================
-# BINANCE PUBLIC DATA API — Multi-Timeframe
+# BINANCE PUBLIC DATA API
 # ============================================================
 def fetch_klines(symbol, interval="1h", limit=35000):
     base_url = "https://data-api.binance.vision/api/v3/klines"
@@ -266,7 +266,7 @@ def compute_mtf(sym, d1h):
 def add_ext_mtf(sym, d1h):
     try:
         dfs = {}
-        for tf in ["15m","30m","2h","3h"]:
+        for tf in ["15m","30m","2h"]:
             d = fetch_klines(sym, tf, 5000)
             if d is not None: dfs[tf] = d
         if not dfs: return None
@@ -285,10 +285,14 @@ def add_ext_mtf(sym, d1h):
             d = dfs["2h"]
             f["h2_rsi"] = rsi(d["close"]).reindex(d1h.index, method="ffill")
             f["h2_trend"] = (d["close"] > d["close"].ewm(span=12).mean()).astype(float).reindex(d1h.index, method="ffill")
-        if "3h" in dfs:
-            d = dfs["3h"]
-            f["h3_rsi"] = rsi(d["close"]).reindex(d1h.index, method="ffill")
-            f["h3_trend"] = (d["close"] > d["close"].ewm(span=12).mean()).astype(float).reindex(d1h.index, method="ffill")
+        # 3h → 1h verisinden resample (Binance 3h desteklemiyor)
+        d3h = d1h.resample("3h").agg({
+            "open":"first","high":"max","low":"min",
+            "close":"last","volume":"sum"
+        }).dropna()
+        if len(d3h) > 10:
+            f["h3_rsi"] = rsi(d3h["close"]).reindex(d1h.index, method="ffill")
+            f["h3_trend"] = (d3h["close"] > d3h["close"].ewm(span=12).mean()).astype(float).reindex(d1h.index, method="ffill")
         tc = [c for c in f.columns if "trend" in c]
         if tc: f["mtf_trend_sum"] = f[tc].sum(axis=1)
         return f
@@ -359,7 +363,6 @@ eth_df = fetch_klines("ETHUSDT", "1h", 35000)
 btc_ret = np.log(btc_df["close"]).diff() if btc_df is not None else None
 eth_ret = np.log(eth_df["close"]).diff() if eth_df is not None else None
 
-# BTC 200-MA (rejim için) — bir kere hesapla
 btc_ma200 = None
 if btc_df is not None and len(btc_df) > 200:
     btc_ma200 = btc_df["close"].rolling(200).mean()
@@ -395,12 +398,10 @@ for sym in SYMBOLS:
         m4 = add_div(sym, df)
         if m4 is not None: df = df.join(m4, how="left")
         
-        # Cross-asset — v4'ün 7 feature'ı
+        # Cross-asset
         if btc_ret is not None:
             f_cross = pd.DataFrame(index=df.index)
             coin_ret = np.log(df["close"]).diff()
-            
-            # BTC/ETH korelasyonları
             f_cross["btc_corr_24"] = coin_ret.rolling(24).corr(btc_ret)
             f_cross["btc_corr_168"] = coin_ret.rolling(168).corr(btc_ret)
             if eth_ret is not None:
@@ -408,25 +409,18 @@ for sym in SYMBOLS:
                 f_cross["mkt_corr_24"] = (f_cross["btc_corr_24"] + f_cross["eth_corr_24"]) / 2
             else:
                 f_cross["mkt_corr_24"] = f_cross["btc_corr_24"]
-            
-            # Relatif getiri
             f_cross["rel_ret_24"] = coin_ret.rolling(24).sum() - btc_ret.rolling(24).sum()
-            
-            # BTC dominance proxy
             if eth_ret is not None:
                 btc_mom = btc_ret.rolling(24).sum().abs()
                 alt_mom = eth_ret.rolling(24).sum().abs()
                 f_cross["btc_dom"] = btc_mom / (btc_mom + alt_mom + 1e-9)
             else:
                 f_cross["btc_dom"] = 0.5
-            
-            # Market regime (BTC 200-MA'ya göre)
             if btc_ma200 is not None:
                 btc_regime = np.sign(btc_df["close"] - btc_ma200)
                 f_cross["mkt_regime"] = btc_regime.reindex(df.index, method="ffill").fillna(0)
             else:
                 f_cross["mkt_regime"] = 0.0
-            
             df = df.join(f_cross, how="left")
         
         # NaN handling
@@ -444,11 +438,12 @@ for sym in SYMBOLS:
         df["ret_fwd"] = fwd
         df = df.dropna().iloc[::24].copy()
         
-        # v4 feature kontrolü
+        # Eksik feature kontrolü + fallback
         missing = [f for f in V4_FEATURES if f not in df.columns]
         if missing:
-            print(f"❌ Eksik: {missing}")
-            continue
+            print(f"⚠️ Eksik: {missing} → 0 ile dolduruluyor")
+            for f in missing:
+                df[f] = 0.0
         
         # Sadece v4'ün 102 feature'ı, v4 ile AYNI sırada
         df_norm = normalize_per_symbol(df[V4_FEATURES].copy())
