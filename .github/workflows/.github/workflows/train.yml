@@ -1,0 +1,48 @@
+name: Auto Train Model
+
+on:
+  schedule:
+    # Her ayın 1'i ve 22'si saat 03:00 UTC (ortalama 3 haftada bir)
+    - cron: '0 3 1,22 * *'
+  workflow_dispatch:  # Manuel tetikleme
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install -q -r requirements.txt
+      
+      - name: Train model
+        run: python train.py
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-${{ github.run_number }}
+          path: output/
+          retention-days: 365
+      
+      - name: Create Release
+        if: success()
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ github.run_number }}
+          name: Model v${{ github.run_number }}
+          files: |
+            output/model_lstm.tflite
+            output/model_mlp.tflite
+            output/params.json
+          body: |
+            Otomatik eğitilmiş model
+            Tarih: ${{ github.event.repository.updated_at }}
