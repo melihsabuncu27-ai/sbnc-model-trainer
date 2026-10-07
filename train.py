@@ -1,5 +1,5 @@
 # ============================================================
-# SBNC OTOMATİK EĞİTİM — GitHub Actions (102 Feature)
+# SBNC OTOMATİK EĞİTİM — GitHub Actions (v4 102 Feature)
 # ============================================================
 import os, sys, json, time
 import numpy as np
@@ -10,6 +10,41 @@ from tensorflow.keras import layers, Model, callbacks, optimizers
 from tensorflow.keras.metrics import AUC
 from sklearn.metrics import roc_auc_score
 from datetime import datetime
+
+# ============================================================
+# v4 ORİJİNAL 102 FEATURE — SIRALAMA ÖNEMLİ!
+# ============================================================
+V4_FEATURES = [
+    # 1-5 OHLCV
+    "open","high","low","close","volume",
+    # 6-11 Time
+    "hour_sin","hour_cos","dow_sin","dow_cos","is_weekend","is_month_end",
+    # 12-29 Vol
+    "rv_6","absr_6","rv_12","absr_12","rv_24","absr_24","rv_48","absr_48",
+    "rv_96","absr_96","rv_sq_24","park_24","gk_24","vol_of_vol",
+    "hl_range","hl_ma24","vol_ma","rsi",
+    # 30-45 Advanced
+    "rv_d","rv_w","rv_m","rv_d_w","rv_w_m","bipower","jump","jump_r",
+    "skew_24","kurt_24","mom_6","mom_24","mom_96","trend_12","trend_24","vol_mom",
+    # 46-63 Technical
+    "stoch_k","stoch_d","stoch_j","adx","plus_di","minus_di",
+    "ichi_tenkan","ichi_kijun","ichi_senkou_a","ichi_senkou_b","ichi_cloud",
+    "supertrend","supertrend_dir","mfi","williams_r","cmf","keltner_pos","donchian_pos",
+    # 64-72 MTF
+    "h4_rsi","h4_macd","h4_macd_hist","h4_atr_norm","h4_ema_trend",
+    "d1_rsi","d1_macd","d1_atr_norm","d1_trend",
+    # 73-79 Cross-asset
+    "btc_corr_24","btc_corr_168","eth_corr_24","mkt_corr_24","rel_ret_24","btc_dom","mkt_regime",
+    # 80-90 ext_mtf
+    "m15_rsi","m15_macd","m15_trend","m30_rsi","m30_macd","m30_trend",
+    "h2_rsi","h2_trend","h3_rsi","h3_trend","mtf_trend_sum",
+    # 91-96 ext_mtf_v2
+    "w1_rsi","w1_trend","w1_mom","m1_rsi","m1_trend","m1_mom",
+    # 97-102 div
+    "rsi_div_1h_4h","rsi_div_1h_1d","rsi_div_4h_1d",
+    "macd_div_1h_4h","macd_div_1h_1d","macd_div_4h_1d",
+]
+assert len(V4_FEATURES) == 102, f"HATA: V4_FEATURES {len(V4_FEATURES)} olmalı, 102 değil!"
 
 # ============================================================
 # AYARLAR
@@ -26,6 +61,7 @@ CURRENT_WALK = 0.68
 
 print(f"🚀 Eğitim başlıyor: {VERSION}")
 print(f"📅 {datetime.now()}")
+print(f"📋 v4 feature listesi: {len(V4_FEATURES)} feature")
 
 
 # ============================================================
@@ -94,7 +130,7 @@ def atr(high, low, close, period=14):
 
 
 # ============================================================
-# FEATURE FONKSİYONLARI
+# FEATURE FONKSİYONLARI (v4 uyumlu)
 # ============================================================
 def add_vol_features(df):
     df = df.copy()
@@ -190,31 +226,6 @@ def add_technical_features(df):
     df["keltner_pos"] = (c - (ema20 - 2*atr20)) / (4*atr20 + 1e-9)
     dcU = h.rolling(20).max(); dcL = l.rolling(20).min()
     df["donchian_pos"] = (c - dcL) / (dcU - dcL + 1e-9)
-    return df
-
-
-def add_advanced_technical(df):
-    df = df.copy()
-    c, h, l, v = df["close"], df["high"], df["low"], df["volume"]
-    hi20 = h.rolling(20).max(); lo20 = l.rolling(20).min()
-    diff = hi20 - lo20 + 1e-9
-    df["fib_pos"] = (c - lo20) / diff
-    df["fib_near_236"] = np.abs(df["fib_pos"] - 0.236)
-    df["fib_near_382"] = np.abs(df["fib_pos"] - 0.382)
-    df["fib_near_618"] = np.abs(df["fib_pos"] - 0.618)
-    dh = h.resample("D").max().shift(1).reindex(df.index, method="ffill")
-    dl = l.resample("D").min().shift(1).reindex(df.index, method="ffill")
-    dcl = c.resample("D").last().shift(1).reindex(df.index, method="ffill")
-    pp = (dh + dl + dcl) / 3
-    r1 = 2 * pp - dl; s1 = 2 * pp - dh
-    df["pivot_pos"] = (c - s1) / (r1 - s1 + 1e-9)
-    df["pivot_dist"] = (c - pp) / (pp + 1e-9)
-    typ = (h + l + c) / 3
-    vwap = (typ * v).rolling(24).sum() / (v.rolling(24).sum() + 1e-9)
-    vwap_std = (typ - vwap).rolling(24).std()
-    df["vwap_dist"] = (c - vwap) / (vwap + 1e-9)
-    df["vwap_band_1"] = (c - vwap) / (2 * vwap_std + 1e-9)
-    df["vwap_band_2"] = (c - vwap) / (4 * vwap_std + 1e-9)
     return df
 
 
@@ -329,43 +340,6 @@ def add_div(sym, d1h):
         return None
 
 
-def add_cross_tf_adv(sym, d1h):
-    try:
-        d4h = fetch_klines(sym, "4h", 10000)
-        d1d = fetch_klines(sym, "1d", 2000)
-        if d4h is None or d1d is None: return None
-        f = pd.DataFrame(index=d1h.index)
-        mom_1h = np.log(d1h["close"] / d1h["close"].shift(24))
-        mom_4h = np.log(d4h["close"] / d4h["close"].shift(6)).reindex(d1h.index, method="ffill")
-        f["mtf_mom_div_1h_4h"] = mom_1h - mom_4h
-        vol_1h = d1h["volume"].pct_change(24)
-        vol_4h = d4h["volume"].pct_change(6).reindex(d1h.index, method="ffill")
-        f["mtf_vol_div"] = vol_1h - vol_4h
-        rsi_1h = rsi(d1h["close"])
-        rsi_4h = rsi(d4h["close"]).reindex(d1h.index, method="ffill")
-        rsi_1d = rsi(d1d["close"]).reindex(d1h.index, method="ffill")
-        f["mtf_rsi_align"] = ((rsi_1h > 50).astype(int)
-                              + (rsi_4h > 50).astype(int)
-                              + (rsi_1d > 50).astype(int))
-        tr_1h = pd.concat([d1h["high"]-d1h["low"],
-                            (d1h["high"]-d1h["close"].shift()).abs(),
-                            (d1h["low"]-d1h["close"].shift()).abs()],
-                           axis=1).max(axis=1)
-        atr_1h = tr_1h.rolling(14).mean()
-        f["mtf_trend_strength"] = d1h["close"].diff(24).abs() / (atr_1h + 1e-9)
-        bo = (d1h["close"] > d1h["high"].rolling(20).max().shift(1)).astype(float)
-        t4 = (d4h["close"] > d4h["close"].rolling(20).mean()).astype(float)
-        f["mtf_breakout_conf"] = bo * t4.reindex(d1h.index, method="ffill")
-        r1h = d1h["high"].rolling(20).max(); s1h = d1h["low"].rolling(20).min()
-        f["mtf_sr_pos_1h"] = (d1h["close"] - s1h) / (r1h - s1h + 1e-9)
-        r4h = d4h["high"].rolling(20).max().reindex(d1h.index, method="ffill")
-        s4h = d4h["low"].rolling(20).min().reindex(d1h.index, method="ffill")
-        f["mtf_sr_pos_4h"] = (d1h["close"] - s4h) / (r4h - s4h + 1e-9)
-        return f
-    except Exception:
-        return None
-
-
 def normalize_per_symbol(df, window=720, min_periods=168):
     for c in df.columns:
         if np.issubdtype(df[c].dtype, np.number):
@@ -385,13 +359,17 @@ eth_df = fetch_klines("ETHUSDT", "1h", 35000)
 btc_ret = np.log(btc_df["close"]).diff() if btc_df is not None else None
 eth_ret = np.log(eth_df["close"]).diff() if eth_df is not None else None
 
+# BTC 200-MA (rejim için) — bir kere hesapla
+btc_ma200 = None
+if btc_df is not None and len(btc_df) > 200:
+    btc_ma200 = btc_df["close"].rolling(200).mean()
+
 
 # ============================================================
 # VERİ HAZIRLA (Her coin için)
 # ============================================================
 print("\n📊 Feature'lar hazırlanıyor...\n")
 X_list, yd_list, yv_list, r_list = [], [], [], []
-FEATS = None
 
 for sym in SYMBOLS:
     try:
@@ -401,14 +379,13 @@ for sym in SYMBOLS:
             print("yetersiz veri")
             continue
         
-        # Feature pipeline
+        # Feature pipeline — v4 ile aynı
         df = add_time_features(df)
         df = add_vol_features(df)
         df = add_advanced_features(df)
         df = add_technical_features(df)
-        df = add_advanced_technical(df)
         
-        # MTF sözlükleri
+        # MTF
         m = compute_mtf(sym, df)
         if m is not None: df = df.join(m, how="left")
         m2 = add_ext_mtf(sym, df)
@@ -417,18 +394,39 @@ for sym in SYMBOLS:
         if m3 is not None: df = df.join(m3, how="left")
         m4 = add_div(sym, df)
         if m4 is not None: df = df.join(m4, how="left")
-        m5 = add_cross_tf_adv(sym, df)
-        if m5 is not None: df = df.join(m5, how="left")
         
-        # Cross-asset
+        # Cross-asset — v4'ün 7 feature'ı
         if btc_ret is not None:
             f_cross = pd.DataFrame(index=df.index)
             coin_ret = np.log(df["close"]).diff()
+            
+            # BTC/ETH korelasyonları
             f_cross["btc_corr_24"] = coin_ret.rolling(24).corr(btc_ret)
             f_cross["btc_corr_168"] = coin_ret.rolling(168).corr(btc_ret)
             if eth_ret is not None:
                 f_cross["eth_corr_24"] = coin_ret.rolling(24).corr(eth_ret)
+                f_cross["mkt_corr_24"] = (f_cross["btc_corr_24"] + f_cross["eth_corr_24"]) / 2
+            else:
+                f_cross["mkt_corr_24"] = f_cross["btc_corr_24"]
+            
+            # Relatif getiri
             f_cross["rel_ret_24"] = coin_ret.rolling(24).sum() - btc_ret.rolling(24).sum()
+            
+            # BTC dominance proxy
+            if eth_ret is not None:
+                btc_mom = btc_ret.rolling(24).sum().abs()
+                alt_mom = eth_ret.rolling(24).sum().abs()
+                f_cross["btc_dom"] = btc_mom / (btc_mom + alt_mom + 1e-9)
+            else:
+                f_cross["btc_dom"] = 0.5
+            
+            # Market regime (BTC 200-MA'ya göre)
+            if btc_ma200 is not None:
+                btc_regime = np.sign(btc_df["close"] - btc_ma200)
+                f_cross["mkt_regime"] = btc_regime.reindex(df.index, method="ffill").fillna(0)
+            else:
+                f_cross["mkt_regime"] = 0.0
+            
             df = df.join(f_cross, how="left")
         
         # NaN handling
@@ -446,18 +444,20 @@ for sym in SYMBOLS:
         df["ret_fwd"] = fwd
         df = df.dropna().iloc[::24].copy()
         
-        FEATURES = [c for c in df.columns
-                    if c not in ["direction","high_vol","ret_fwd"]
-                    and np.issubdtype(df[c].dtype, np.number)]
+        # v4 feature kontrolü
+        missing = [f for f in V4_FEATURES if f not in df.columns]
+        if missing:
+            print(f"❌ Eksik: {missing}")
+            continue
         
-        df_norm = normalize_per_symbol(df[FEATURES].copy())
+        # Sadece v4'ün 102 feature'ı, v4 ile AYNI sırada
+        df_norm = normalize_per_symbol(df[V4_FEATURES].copy())
         
         X_list.append(df_norm.values.astype("float32"))
         yd_list.append(df["direction"].values.astype("int32"))
         yv_list.append(df["high_vol"].values.astype("int32"))
         r_list.append(df["ret_fwd"].values.astype("float32"))
-        FEATS = FEATURES
-        print(f"✅ {len(df)} örnek, {len(FEATURES)} feature")
+        print(f"✅ {len(df)} örnek, {len(V4_FEATURES)} feature")
     except Exception as e:
         print(f"❌ {e}")
 
@@ -469,7 +469,7 @@ X_all = np.nan_to_num(np.concatenate(X_list,0), nan=0., posinf=0., neginf=0.)
 yd_all = np.concatenate(yd_list, 0)
 yv_all = np.concatenate(yv_list, 0)
 r_all = np.concatenate(r_list, 0)
-print(f"\n✅ Veri: {X_all.shape}, {len(FEATS)} feature")
+print(f"\n✅ Veri: {X_all.shape}, {len(V4_FEATURES)} feature")
 
 
 # ============================================================
@@ -567,7 +567,7 @@ if not passed:
 
 
 # ============================================================
-# TFLITE
+# TFLITE (LSTM)
 # ============================================================
 print("\n📦 TFLite'a çevriliyor...")
 
@@ -582,7 +582,9 @@ converter._experimental_lower_tensor_list_ops = False
 tflite_lstm = converter.convert()
 
 
+# ============================================================
 # MLP
+# ============================================================
 print("\n🧠 MLP eğitiliyor...")
 
 def build_mlp(n_feat):
@@ -631,8 +633,8 @@ with open(f"{OUT_DIR}/model_mlp.tflite", "wb") as f:
 params = {
     "version": VERSION,
     "trained_at": datetime.now().isoformat(),
-    "features": FEATS,
-    "feature_count": len(FEATS),
+    "features": V4_FEATURES,
+    "feature_count": len(V4_FEATURES),
     "seq_len": 48,
     "w_lstm": 0.5,
     "w_mlp": 0.5,
@@ -648,5 +650,5 @@ with open(f"{OUT_DIR}/params.json", "w") as f:
 print(f"\n✅ Model kaydedildi: {OUT_DIR}/")
 print(f"   - model_lstm.tflite ({len(tflite_lstm)/1024:.1f} KB)")
 print(f"   - model_mlp.tflite ({len(tflite_mlp)/1024:.1f} KB)")
-print(f"   - params.json ({len(FEATS)} feature)")
+print(f"   - params.json ({len(V4_FEATURES)} feature)")
 print(f"\n🎉 EĞİTİM BAŞARILI: {VERSION}")
