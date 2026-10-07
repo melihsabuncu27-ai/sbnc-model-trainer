@@ -29,6 +29,7 @@ jobs:
         run: python train.py
 
       - name: Upload artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: model-${{ github.run_number }}
@@ -45,6 +46,9 @@ jobs:
             output/model_lstm.tflite
             output/model_mlp.tflite
             output/params.json
-          body: |
-            Otomatik eğitilmiş model
-            Tarih: ${{ github.event.repository.updated_at }}
+          body: "v4 102-feature model (run ${{ github.run_number }})"
+          draft: false
+          prerelease: false
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
